@@ -25,10 +25,31 @@
 
 #include <stdlib.h>
 #include <dlfcn.h>
+#include <cutils/properties.h>
 
 static void freeSharedLibEntry(void* ptr);
 static void* lookupSharedLibMethod(const Method* method);
 
+#ifdef WITH_HOUDINI
+/*
+ * Pointer to hold Houdini Hook structure defined in libhoudini_hook.a
+ */
+void *gHoudiniHook = NULL;
+
+namespace houdini {
+void* hookDlopen(const char* filename, int flag, bool* useHoudini);
+void* hookDlsym(bool useHoudini, void* handle, const char* symbol);
+int hookJniOnload(bool useHoudini, void* func, void* jniVm, void* arg);
+}
+/*
+ * Get the shorty string for a method.
+ */
+const char* dvmGetMethodShorty(void* method)
+{
+    const Method* meth = (const Method*)method;
+    return meth->shorty;
+}
+#endif
 
 /*
  * Initialize the native code loader.
@@ -156,6 +177,9 @@ struct SharedLib {
     pthread_cond_t  onLoadCond;     /* wait for JNI_OnLoad in other thread */
     u4              onLoadThreadId; /* recursive invocation guard */
     OnLoadState     onLoadResult;   /* result of earlier JNI_OnLoad */
+#ifdef WITH_HOUDINI
+    bool        useHoudini;
+#endif
 };
 
 /*
@@ -296,6 +320,7 @@ static bool checkOnLoadResult(SharedLib* pEntry)
     return result;
 }
 
+
 typedef int (*OnLoadFunc)(JavaVM*, void*);
 
 /*
@@ -380,7 +405,12 @@ bool dvmLoadNativeCode(const char* pathName, Object* classLoader,
      */
     Thread* self = dvmThreadSelf();
     ThreadStatus oldStatus = dvmChangeStatus(self, THREAD_VMWAIT);
+#ifdef WITH_HOUDINI
+    bool useHoudini = false;
+    handle = houdini::hookDlopen(pathName, RTLD_LAZY, &useHoudini);
+#else
     handle = dlopen(pathName, RTLD_LAZY);
+#endif
     dvmChangeStatus(self, oldStatus);
 
     if (handle == NULL) {
@@ -393,6 +423,9 @@ bool dvmLoadNativeCode(const char* pathName, Object* classLoader,
     pNewEntry = (SharedLib*) calloc(1, sizeof(SharedLib));
     pNewEntry->pathName = strdup(pathName);
     pNewEntry->handle = handle;
+#ifdef WITH_HOUDINI
+    pNewEntry->useHoudini = useHoudini;
+#endif
     pNewEntry->classLoader = classLoader;
     dvmInitMutex(&pNewEntry->onLoadLock);
     pthread_cond_init(&pNewEntry->onLoadCond, NULL);
@@ -413,8 +446,11 @@ bool dvmLoadNativeCode(const char* pathName, Object* classLoader,
         bool result = true;
         void* vonLoad;
         int version;
-
+#ifdef WITH_HOUDINI
+        vonLoad = houdini::hookDlsym(useHoudini, handle, "JNI_OnLoad");
+#else
         vonLoad = dlsym(handle, "JNI_OnLoad");
+#endif
         if (vonLoad == NULL) {
             LOGD("No JNI_OnLoad found in %s %p, skipping init",
                 pathName, classLoader);
@@ -433,7 +469,11 @@ bool dvmLoadNativeCode(const char* pathName, Object* classLoader,
             if (gDvm.verboseJni) {
                 LOGI("[Calling JNI_OnLoad for \"%s\"]", pathName);
             }
+#ifdef WITH_HOUDINI
+            version = houdini::hookJniOnload(useHoudini, (void*)func, (void*)gDvmJni.jniVm, NULL);
+#else
             version = (*func)(gDvmJni.jniVm, NULL);
+#endif
             dvmChangeStatus(self, oldStatus);
             self->classLoaderOverride = prevOverride;
 
@@ -702,6 +742,10 @@ static int findMethodInLib(void* vlib, void* vmethod)
     } else
         LOGV("+++ scanning '%s' for '%s'", pLib->pathName, meth->name);
 
+#ifdef WITH_HOUDINI
+    dvmSetHoudiniMethod((Method*)vmethod, pLib->useHoudini);
+#endif
+
     /*
      * First, we try it without the signature.
      */
@@ -715,7 +759,11 @@ static int findMethodInLib(void* vlib, void* vmethod)
         goto bail;
 
     LOGV("+++ calling dlsym(%s)", mangleCM);
+#ifdef WITH_HOUDINI
+    func = houdini::hookDlsym(pLib->useHoudini, pLib->handle, mangleCM);
+#else
     func = dlsym(pLib->handle, mangleCM);
+#endif
     if (func == NULL) {
         mangleSig =
             createMangledSignature(&meth->prototype);
@@ -729,7 +777,11 @@ static int findMethodInLib(void* vlib, void* vmethod)
         sprintf(mangleCMSig, "%s__%s", mangleCM, mangleSig);
 
         LOGV("+++ calling dlsym(%s)", mangleCMSig);
+#ifdef WITH_HOUDINI
+        func = houdini::hookDlsym(pLib->useHoudini, pLib->handle, mangleCMSig);
+#else
         func = dlsym(pLib->handle, mangleCMSig);
+#endif
         if (func != NULL) {
             LOGV("Found '%s' with dlsym", mangleCMSig);
         }
