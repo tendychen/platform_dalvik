@@ -580,6 +580,9 @@ struct Method {
 
     /* set if method was called during method profiling */
     bool            inProfile;
+
+    // is ARM ?
+    int		is_arm;
 };
 
 

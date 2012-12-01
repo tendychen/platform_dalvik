@@ -64,6 +64,9 @@ u4 dvmPlatformInvokeHints(const DexProto* proto);
 char* dvmCreateSystemLibraryName(char* libName);
 bool dvmLoadNativeCode(const char* fileName, Object* classLoader,
         char** detail);
+void *dvm_dlopen(const char *filename, int flag, int *p_is_arm);
+void *dvm_dlsym(void *handle, const char *symbol, int is_arm);
+void dvm_androidrt2hdCreateActivity(void *fn, void *code, void *native, void *rawSavedState, int rawSavedSize);
 
 
 /*
