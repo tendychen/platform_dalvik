@@ -27,59 +27,36 @@
 #include <stdlib.h>
 #include <dlfcn.h>
 
-// ARM->x86 binary translation support
-int (*h_init)(int (**f)(int, const char *, const char *, ...)) = NULL;
-void * (*h_dlopen)(const char *, int) = NULL;
-void * (*h_dlsym)(void *, const char *) = NULL;
 void (*h_NativeMethodHelper)(int, void *, int, JValue *, int, unsigned char *, void *) = NULL;
 void (*h_androidrt2hdCreateActivity)(void *fn, void *code, void *native, void *rawSavedState, int rawSavedSize) = NULL;
-
-int my_android_log_print(int prio, const char *tag, const char *fmt, ...)
-{
-    ALOGE("my_android_log_print() called\n");
-    return 0;
-}
 
 static void init_houdini() {
     static void *h_handle = NULL;
 
     if (h_handle)
-	return;
+       return;
 
     h_handle = dlopen("/system/lib/libhoudini.so", RTLD_LAZY);
     if (!h_handle) {
-	ALOGE("Unable to open libhoudini lib\n");
-	return;
+       ALOGE("Unable to open libhoudini lib\n");
+       return;
     }
-
-    *(void **)(&h_dlopen) = dlsym(h_handle, "dvm2hdDlopen");
-    if (!h_dlopen)
-	ALOGE("Unable to find dvm2hdDlopen() function");
-
-    *(void **)(&h_dlsym) = dlsym(h_handle, "dvm2hdDlsym");
-    if (!h_dlsym)
-	ALOGE("Unable to find dvm2hdDlsym() function");
-
-    *(void **)(&h_init) = dlsym(h_handle, "dvm2hdInit");
-    if (!h_init)
-	ALOGE("Unable to find dvm2hdInit() function");
 
     *(void **)(&h_NativeMethodHelper) = dlsym(h_handle, "dvm2hdNativeMethodHelper");
     if (!h_NativeMethodHelper)
-	ALOGE("Unable to find dvm2hdNativeMethodHelper() function");
+       ALOGE("Unable to find dvm2hdNativeMethodHelper() function");
 
     *(void **)(&h_androidrt2hdCreateActivity) = dlsym(h_handle, "androidrt2hdCreateActivity");
     if (!h_androidrt2hdCreateActivity)
         ALOGE("Unable to find androidrt2hdCreateActivity() function");
-
-    //int (*my_f)(int, const char *, const char *, ...) = __android_log_print;
-    
-    //int r_init = (*h_init)(&my_f);
-    //ALOGE("dvm2hdInit() returned %d\n", r_init);
 }
 
-void * (*h_dvmHoudiniDlopen)(const char *, int) = NULL;
-void (*h_dvmHoudiniPlatformInvoke)(void*, ClassObject*, int, int, const u4*, const char*, void*, JValue *);
+void * (*h_dvmHoudiniDlopen)(const char *, int, bool *) = NULL;
+void (*h_dvmHoudiniPlatformInvoke)(void*, ClassObject*, int, int, const u4*, const char*, void*, JValue *) = NULL;
+void (*h_dvmHoudiniInit)(void) = NULL;
+void * (*h_dvmHoudiniDlsym)(bool, void *, const char *) = NULL;
+// void (*h_dvmHoudiniCreateActivity)(bool, void *, void *, void *, void *, unsigned int) = NULL;
+// int (*h_dvmHoudiniJniOnLoad)(bool, void *, void *, void *) = NULL;
 
 int jniRegisterSystemMethods(void *p)
 {
@@ -99,17 +76,37 @@ static void init_dvm_houdini() {
 	return;
     }
 
-    *(void **)(&h_dvmHoudiniDlopen) = dlsym(h_handle, "_Z16dvmHoudiniDlopenPKci");
+    *(void **)(&h_dvmHoudiniDlopen) = dlsym(h_handle, "_ZN7houdini10hookDlopenEPKciPb");
     if (!h_dvmHoudiniDlopen)
 	ALOGE("Unable to find dvmHoudiniDlopen() function");
 
-    *(void **)(&h_dvmHoudiniPlatformInvoke) = dlsym(h_handle, "_Z24dvmHoudiniPlatformInvokePvP11ClassObjectiiPKjPKcS_P6JValue");
+    *(void **)(&h_dvmHoudiniPlatformInvoke) = dlsym(h_handle, "_ZN7houdini21dvmHookPlatformInvokeEPvS0_iiPKiPKcS0_S0_");
     if (!h_dvmHoudiniPlatformInvoke)
 	ALOGE("Unable to find dvmHoudiniPlatformInvoke() function");
+
+    *(void **)(&h_dvmHoudiniInit) = dlsym(h_handle, "_Z15houdiniHookInitv");
+    if (!h_dvmHoudiniInit)
+	ALOGE("Unable to find dvmHoudiniInit() function");
+
+    if (h_dvmHoudiniInit)
+        (*h_dvmHoudiniInit)();
+
+    *(void **)(&h_dvmHoudiniDlsym) = dlsym(h_handle, "_ZN7houdini9hookDlsymEbPvPKc");
+    if (!h_dvmHoudiniDlsym)
+	ALOGE("Unable to find dvmHoudiniDlsym() function");
+
+    // *(void **)(&h_dvmHoudiniCreateActivity) = dlsym(h_handle, "_ZN7houdini18hookCreateActivityEbPvS0_S0_S0_j");
+    // if (!h_dvmHoudiniCreateActivity)
+    //     ALOGE("Unable to find dvmHoudiniCreateActivity() function");
+
+    // *(void **)(&h_dvmHoudiniJniOnLoad) = dlsym(h_handle, "_ZN7houdini13hookJniOnloadEbPvS0_S0_");
+    // if (!h_dvmHoudiniJniOnLoad)
+    //     ALOGE("Unable to find dvmHoudiniJniOnLoad() function");
 }
 
 void *dvm_dlopen(const char *filename, int flag, int *p_is_arm) {
     void *r;
+    bool dlopen_bool = 0;
 
     if (p_is_arm)
         *p_is_arm = 0;
@@ -121,7 +118,8 @@ void *dvm_dlopen(const char *filename, int flag, int *p_is_arm) {
     init_dvm_houdini();
     if (h_dvmHoudiniDlopen) {
 	ALOGE("The lib may be ARM... trying to load it [%s] using houdini\n", filename);
-	r = (*h_dvmHoudiniDlopen)(filename,flag);
+	r = (*h_dvmHoudiniDlopen)(filename,flag,&dlopen_bool);
+        ALOGE("dvmHoudiniDlopen returns %p with bool=%d\n", r, dlopen_bool);
     }
 
     if (!r) {
@@ -130,7 +128,7 @@ void *dvm_dlopen(const char *filename, int flag, int *p_is_arm) {
     }
 
     if (p_is_arm)
-        *p_is_arm = 1;  
+        *p_is_arm = 1 | ((dlopen_bool?1:0)<<16);
 
     return r;
 }
@@ -141,8 +139,8 @@ void *dvm_dlsym(void *handle, const char *symbol, int is_arm) {
     if (is_arm) {
         init_houdini();
 
-        if (h_dlsym)
-            return (*h_dlsym)(handle, symbol);
+        if (h_dvmHoudiniDlsym)
+            return (*h_dvmHoudiniDlsym)((is_arm>>16), handle, symbol);
         else 
             return NULL;
     }
@@ -551,7 +549,7 @@ bool dvmLoadNativeCode(const char* pathName, Object* classLoader,
 
         bool result = true;
         void* vonLoad;
-        int version;
+        int version=0;
 
         vonLoad = dvm_dlsym(handle, "JNI_OnLoad", is_arm);
         if (vonLoad == NULL) {
@@ -573,14 +571,14 @@ bool dvmLoadNativeCode(const char* pathName, Object* classLoader,
                 ALOGI("[Calling JNI_OnLoad for \"%s\"]", pathName);
             }
 	    if (is_arm) {
-		void *p_jnivm = (void *)(&(gDvmJni.jniVm));
-		if (h_NativeMethodHelper) {
-		    ALOGE("Calling NativeMethodHelper for JNI_OnLoad");
-		    global_is_arm = 1;
-		    (*h_NativeMethodHelper)(1, (void *)func, 0x49, (JValue *)&version, 2, 0, p_jnivm);
-		    global_is_arm = 0;
-		    ALOGE("Version returned : %d", version);
-		}
+                void *p_jnivm = (void *)(&(gDvmJni.jniVm));
+                if (h_NativeMethodHelper) {
+                    ALOGE("Calling h_NativeMethodHelper");
+                    global_is_arm = 1;
+                    (*h_NativeMethodHelper)(1, (void *)func, 0x49, (JValue *)&version, 2, 0, p_jnivm);
+                    global_is_arm = 0;
+                    ALOGE("Version returned : %x", version);
+                }
 	    }
 	    else {
             	version = (*func)(gDvmJni.jniVm, NULL);	
@@ -882,6 +880,7 @@ static int findMethodInLib(void* vlib, void* vmethod)
 
         ALOGV("+++ calling dlsym(%s)", mangleCMSig);
         func = dvm_dlsym(pLib->handle, mangleCMSig, pLib->is_arm);
+        ALOGV("dvm_dlsym() returns %p on %s with handle %p", func, mangleCMSig, pLib->handle);
         if (func != NULL) {
             ALOGV("Found '%s' with dlsym", mangleCMSig);
         }
