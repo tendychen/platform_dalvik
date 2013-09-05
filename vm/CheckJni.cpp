@@ -1994,6 +1994,27 @@ static jobjectRefType Check_GetObjectRefType(JNIEnv* env, jobject obj) {
     return CHECK_JNI_EXIT("I", baseEnv(env)->GetObjectRefType(env, obj));
 }
 
+static void* Check_DvmDlopen(JNIEnv *env, const char * filename, int flags) {
+    //return baseEnv(env)->DvmDlopen(env, filename, flags);
+    return NULL;
+}
+
+static void* Check_DvmDlsym(JNIEnv *env, void *handle, const char * func) {
+    //return baseEnv(env)->DvmDlsym(handle, func, 1);
+    return NULL;
+}
+
+static void Check_DvmSetGlobalARM(int i) {
+    //return baseEnv(env)->DvmSetGlobalARM(i);
+}
+
+static void Check_DvmAndroidrt2hdCreateActivity(void *fn, void *code, void *native, void *rawSavedState, int rawSavedSize) {
+    //return baseEnv(env)->DvmAndroidrt2hdCreateActivity(fn, code, native, rawSavedState, rawSavedSize);
+}
+
+
+
+
 static jobject Check_NewDirectByteBuffer(JNIEnv* env, void* address, jlong capacity) {
     CHECK_JNI_ENTRY(kFlag_Default, "EpJ", env, address, capacity);
     return CHECK_JNI_EXIT("L", baseEnv(env)->NewDirectByteBuffer(env, address, capacity));
@@ -2326,7 +2347,12 @@ static const struct JNINativeInterface gCheckNativeInterface = {
     Check_GetDirectBufferAddress,
     Check_GetDirectBufferCapacity,
 
-    Check_GetObjectRefType
+    Check_GetObjectRefType,
+
+    Check_DvmDlopen,
+    Check_DvmDlsym,
+    Check_DvmSetGlobalARM,
+    Check_DvmAndroidrt2hdCreateActivity,
 };
 
 static const struct JNIInvokeInterface gCheckInvokeInterface = {

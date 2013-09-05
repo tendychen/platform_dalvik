@@ -21,10 +21,141 @@
  * Someday we may want to export the interface as a faster but riskier
  * alternative to JNI.
  */
+#define LOG_NDEBUG 0
 #include "Dalvik.h"
 
 #include <stdlib.h>
 #include <dlfcn.h>
+
+void (*h_NativeMethodHelper)(int, void *, int, JValue *, int, unsigned char *, void *) = NULL;
+void (*h_androidrt2hdCreateActivity)(void *fn, void *code, void *native, void *rawSavedState, int rawSavedSize) = NULL;
+
+static void init_houdini() {
+    static void *h_handle = NULL;
+
+    if (h_handle)
+       return;
+
+    h_handle = dlopen("/system/lib/libhoudini.so", RTLD_LAZY);
+    if (!h_handle) {
+       ALOGE("Unable to open libhoudini lib\n");
+       return;
+    }
+
+    *(void **)(&h_NativeMethodHelper) = dlsym(h_handle, "dvm2hdNativeMethodHelper");
+    if (!h_NativeMethodHelper)
+       ALOGE("Unable to find dvm2hdNativeMethodHelper() function");
+
+    *(void **)(&h_androidrt2hdCreateActivity) = dlsym(h_handle, "androidrt2hdCreateActivity");
+    if (!h_androidrt2hdCreateActivity)
+        ALOGE("Unable to find androidrt2hdCreateActivity() function");
+}
+
+void * (*h_dvmHoudiniDlopen)(const char *, int, bool *) = NULL;
+void (*h_dvmHoudiniPlatformInvoke)(void*, ClassObject*, int, int, const u4*, const char*, void*, JValue *) = NULL;
+void (*h_dvmHoudiniInit)(void) = NULL;
+void * (*h_dvmHoudiniDlsym)(bool, void *, const char *) = NULL;
+// void (*h_dvmHoudiniCreateActivity)(bool, void *, void *, void *, void *, unsigned int) = NULL;
+// int (*h_dvmHoudiniJniOnLoad)(bool, void *, void *, void *) = NULL;
+
+int jniRegisterSystemMethods(void *p)
+{
+    ALOGE("fake jniRegisterSystemMethods()");
+    return 1;
+}
+
+static void init_dvm_houdini() {
+    static void *h_handle = NULL;
+
+    if (h_handle)
+	return;
+
+    h_handle = dlopen("/system/lib/libdvm_houdini.so", RTLD_LAZY);
+    if (!h_handle) {
+	ALOGE("Unable to open libdvm_houdini lib: %s\n", dlerror());
+	return;
+    }
+
+    *(void **)(&h_dvmHoudiniDlopen) = dlsym(h_handle, "_ZN7houdini10hookDlopenEPKciPb");
+    if (!h_dvmHoudiniDlopen)
+	ALOGE("Unable to find dvmHoudiniDlopen() function");
+
+    *(void **)(&h_dvmHoudiniPlatformInvoke) = dlsym(h_handle, "_ZN7houdini21dvmHookPlatformInvokeEPvS0_iiPKiPKcS0_S0_");
+    if (!h_dvmHoudiniPlatformInvoke)
+	ALOGE("Unable to find dvmHoudiniPlatformInvoke() function");
+
+    *(void **)(&h_dvmHoudiniInit) = dlsym(h_handle, "_Z15houdiniHookInitv");
+    if (!h_dvmHoudiniInit)
+	ALOGE("Unable to find dvmHoudiniInit() function");
+
+    if (h_dvmHoudiniInit)
+        (*h_dvmHoudiniInit)();
+
+    *(void **)(&h_dvmHoudiniDlsym) = dlsym(h_handle, "_ZN7houdini9hookDlsymEbPvPKc");
+    if (!h_dvmHoudiniDlsym)
+	ALOGE("Unable to find dvmHoudiniDlsym() function");
+
+    // *(void **)(&h_dvmHoudiniCreateActivity) = dlsym(h_handle, "_ZN7houdini18hookCreateActivityEbPvS0_S0_S0_j");
+    // if (!h_dvmHoudiniCreateActivity)
+    //     ALOGE("Unable to find dvmHoudiniCreateActivity() function");
+
+    // *(void **)(&h_dvmHoudiniJniOnLoad) = dlsym(h_handle, "_ZN7houdini13hookJniOnloadEbPvS0_S0_");
+    // if (!h_dvmHoudiniJniOnLoad)
+    //     ALOGE("Unable to find dvmHoudiniJniOnLoad() function");
+}
+
+void *dvm_dlopen(const char *filename, int flag, int *p_is_arm) {
+    void *r;
+    bool dlopen_bool = 0;
+
+    if (p_is_arm)
+        *p_is_arm = 0;
+
+    r = dlopen(filename,flag);
+    if (r)
+	return r;
+
+    init_dvm_houdini();
+    if (h_dvmHoudiniDlopen) {
+	ALOGE("The lib may be ARM... trying to load it [%s] using houdini\n", filename);
+	r = (*h_dvmHoudiniDlopen)(filename,flag,&dlopen_bool);
+        ALOGE("dvmHoudiniDlopen returns %p with bool=%d\n", r, dlopen_bool);
+    }
+
+    if (!r) {
+	ALOGE("dvm_dlopen: unable to open %s\n", filename);
+	return r;
+    }
+
+    if (p_is_arm)
+        *p_is_arm = 1 | ((dlopen_bool?1:0)<<16);
+
+    return r;
+}
+
+void *dvm_dlsym(void *handle, const char *symbol, int is_arm) {
+    void *r;
+
+    if (is_arm) {
+        init_houdini();
+
+        if (h_dvmHoudiniDlsym)
+            return (*h_dvmHoudiniDlsym)((is_arm>>16), handle, symbol);
+        else 
+            return NULL;
+    }
+    else {
+        return dlsym(handle, symbol);
+    }
+}
+
+void dvm_androidrt2hdCreateActivity(void *fn, void *code, void *native, void *rawSavedState, int rawSavedSize) 
+{
+    if (h_androidrt2hdCreateActivity)
+        h_androidrt2hdCreateActivity(fn, code, native, rawSavedState, rawSavedSize);
+}
+
+
 
 static void freeSharedLibEntry(void* ptr);
 static void* lookupSharedLibMethod(const Method* method);
@@ -156,6 +287,7 @@ struct SharedLib {
     pthread_cond_t  onLoadCond;     /* wait for JNI_OnLoad in other thread */
     u4              onLoadThreadId; /* recursive invocation guard */
     OnLoadState     onLoadResult;   /* result of earlier JNI_OnLoad */
+    int		is_arm;
 };
 
 /*
@@ -298,6 +430,8 @@ static bool checkOnLoadResult(SharedLib* pEntry)
 
 typedef int (*OnLoadFunc)(JavaVM*, void*);
 
+int global_is_arm = 0;
+
 /*
  * Load native code from the specified absolute pathname.  Per the spec,
  * if we've already loaded a library with the specified pathname, we
@@ -321,6 +455,7 @@ bool dvmLoadNativeCode(const char* pathName, Object* classLoader,
     SharedLib* pEntry;
     void* handle;
     bool verbose;
+    int is_arm;
 
     /* reduce noise by not chattering about system libraries */
     verbose = !!strncmp(pathName, "/system", sizeof("/system")-1);
@@ -380,7 +515,7 @@ bool dvmLoadNativeCode(const char* pathName, Object* classLoader,
      */
     Thread* self = dvmThreadSelf();
     ThreadStatus oldStatus = dvmChangeStatus(self, THREAD_VMWAIT);
-    handle = dlopen(pathName, RTLD_LAZY);
+    handle = dvm_dlopen(pathName, RTLD_LAZY, &is_arm);
     dvmChangeStatus(self, oldStatus);
 
     if (handle == NULL) {
@@ -395,6 +530,7 @@ bool dvmLoadNativeCode(const char* pathName, Object* classLoader,
     pNewEntry->pathName = strdup(pathName);
     pNewEntry->handle = handle;
     pNewEntry->classLoader = classLoader;
+    pNewEntry->is_arm = is_arm;
     dvmInitMutex(&pNewEntry->onLoadLock);
     pthread_cond_init(&pNewEntry->onLoadCond, NULL);
     pNewEntry->onLoadThreadId = self->threadId;
@@ -413,9 +549,9 @@ bool dvmLoadNativeCode(const char* pathName, Object* classLoader,
 
         bool result = true;
         void* vonLoad;
-        int version;
+        int version=0;
 
-        vonLoad = dlsym(handle, "JNI_OnLoad");
+        vonLoad = dvm_dlsym(handle, "JNI_OnLoad", is_arm);
         if (vonLoad == NULL) {
             ALOGD("No JNI_OnLoad found in %s %p, skipping init",
                 pathName, classLoader);
@@ -434,7 +570,19 @@ bool dvmLoadNativeCode(const char* pathName, Object* classLoader,
             if (gDvm.verboseJni) {
                 ALOGI("[Calling JNI_OnLoad for \"%s\"]", pathName);
             }
-            version = (*func)(gDvmJni.jniVm, NULL);
+	    if (is_arm) {
+                void *p_jnivm = (void *)(&(gDvmJni.jniVm));
+                if (h_NativeMethodHelper) {
+                    ALOGE("Calling h_NativeMethodHelper");
+                    global_is_arm = 1;
+                    (*h_NativeMethodHelper)(1, (void *)func, 0x49, (JValue *)&version, 2, 0, p_jnivm);
+                    global_is_arm = 0;
+                    ALOGE("Version returned : %x", version);
+                }
+	    }
+	    else {
+            	version = (*func)(gDvmJni.jniVm, NULL);	
+	    }
             dvmChangeStatus(self, oldStatus);
             self->classLoaderOverride = prevOverride;
 
@@ -688,7 +836,7 @@ static char* createMangledSignature(const DexProto* proto)
 static int findMethodInLib(void* vlib, void* vmethod)
 {
     const SharedLib* pLib = (const SharedLib*) vlib;
-    const Method* meth = (const Method*) vmethod;
+    Method* meth = (Method*) vmethod;
     char* preMangleCM = NULL;
     char* mangleCM = NULL;
     char* mangleSig = NULL;
@@ -696,6 +844,7 @@ static int findMethodInLib(void* vlib, void* vmethod)
     void* func = NULL;
     int len;
 
+    meth->is_arm = pLib->is_arm;
     if (meth->clazz->classLoader != pLib->classLoader) {
         ALOGV("+++ not scanning '%s' for '%s' (wrong CL)",
             pLib->pathName, meth->name);
@@ -716,7 +865,7 @@ static int findMethodInLib(void* vlib, void* vmethod)
         goto bail;
 
     ALOGV("+++ calling dlsym(%s)", mangleCM);
-    func = dlsym(pLib->handle, mangleCM);
+    func = dvm_dlsym(pLib->handle, mangleCM, pLib->is_arm);
     if (func == NULL) {
         mangleSig =
             createMangledSignature(&meth->prototype);
@@ -730,7 +879,8 @@ static int findMethodInLib(void* vlib, void* vmethod)
         sprintf(mangleCMSig, "%s__%s", mangleCM, mangleSig);
 
         ALOGV("+++ calling dlsym(%s)", mangleCMSig);
-        func = dlsym(pLib->handle, mangleCMSig);
+        func = dvm_dlsym(pLib->handle, mangleCMSig, pLib->is_arm);
+        ALOGV("dvm_dlsym() returns %p on %s with handle %p", func, mangleCMSig, pLib->handle);
         if (func != NULL) {
             ALOGV("Found '%s' with dlsym", mangleCMSig);
         }
