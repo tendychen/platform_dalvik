@@ -25,6 +25,8 @@
 #include <sys/wait.h>
 #include <grp.h>
 #include <errno.h>
+#include <sys/time.h>
+#include <sys/resource.h>
 
 #if defined(HAVE_PRCTL)
 # include <sys/prctl.h>
