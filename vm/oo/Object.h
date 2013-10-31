@@ -580,9 +580,9 @@ struct Method {
 
     /* set if method was called during method profiling */
     bool            inProfile;
-
-    // is ARM ?
-    int		is_arm;
+#ifdef WITH_HOUDINI
+    bool            needHoudini;
+#endif
 };
 
 
@@ -694,6 +694,14 @@ INLINE bool dvmIsFinalMethod(const Method* method) {
 INLINE bool dvmIsNativeMethod(const Method* method) {
     return (method->accessFlags & ACC_NATIVE) != 0;
 }
+#ifdef WITH_HOUDINI
+INLINE void dvmSetHoudiniMethod(Method* method, bool needHoudini) {
+    method->needHoudini = needHoudini;
+}
+INLINE bool dvmNeedHoudiniMethod(const Method* method) {
+    return (method->needHoudini);
+}
+#endif
 INLINE bool dvmIsAbstractMethod(const Method* method) {
     return (method->accessFlags & ACC_ABSTRACT) != 0;
 }
