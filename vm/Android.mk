@@ -133,6 +133,7 @@ ifeq ($(WITH_HOST_DALVIK),true)
     endif
 
     LOCAL_CFLAGS += $(host_smp_flag)
+    LOCAL_CFLAGS += -Wa,--noexecstack
     LOCAL_MODULE_TAGS := optional
     LOCAL_MODULE := libdvm
 

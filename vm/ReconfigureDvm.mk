@@ -24,11 +24,24 @@ ifeq ($(dvm_arch_variant),x86-atom)
 dvm_arch_variant := x86
 endif
 
+# for single arch-variant if x86
+ifeq ($(dvm_arch),x86)
+  dvm_arch_variant := x86
+endif
+
 include $(LOCAL_PATH)/Dvm.mk
+
+ifeq ($(INTEL_HOUDINI),true)
+    LOCAL_CFLAGS += -DWITH_HOUDINI
+endif
 
 LOCAL_SHARED_LIBRARIES += liblog libcutils libnativehelper libz libdl libcorkscrew
 
 LOCAL_STATIC_LIBRARIES += libdex
+
+ifeq ($(INTEL_HOUDINI),true)
+    LOCAL_STATIC_LIBRARIES += libhoudini_hook
+endif
 
 LOCAL_C_INCLUDES += external/stlport/stlport bionic/ bionic/libstdc++/include
 LOCAL_SHARED_LIBRARIES += libstlport
