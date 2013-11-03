@@ -25,6 +25,7 @@
 
 #include <stdlib.h>
 #include <dlfcn.h>
+#include <cutils/properties.h>
 
 static void freeSharedLibEntry(void* ptr);
 static void* lookupSharedLibMethod(const Method* method);
@@ -319,6 +320,7 @@ static bool checkOnLoadResult(SharedLib* pEntry)
     return result;
 }
 
+
 typedef int (*OnLoadFunc)(JavaVM*, void*);
 
 /*
@@ -444,7 +446,6 @@ bool dvmLoadNativeCode(const char* pathName, Object* classLoader,
         bool result = true;
         void* vonLoad;
         int version;
-
 #ifdef WITH_HOUDINI
         vonLoad = houdini::hookDlsym(useHoudini, handle, "JNI_OnLoad");
 #else

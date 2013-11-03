@@ -274,6 +274,10 @@ struct ArrayObject : Object {
     /* number of elements; immutable after init */
     u4              length;
 
+#ifdef MTERP_NO_UNALIGN_64
+    u4              dummy;      /* padding to get 'contents' at offset 16 */
+#endif
+
     /*
      * Array contents; actual size is (length * sizeof(type)).  This is
      * declared as u8 so that the compiler inserts any necessary padding
