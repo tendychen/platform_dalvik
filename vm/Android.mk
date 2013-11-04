@@ -46,6 +46,7 @@ include $(LOCAL_PATH)/ReconfigureDvm.mk
 # Overwrite default settings
 LOCAL_MODULE := libdvm
 LOCAL_CFLAGS += $(target_smp_flag)
+LOCAL_CFLAGS += -Wa,--noexecstack
 
 # Define WITH_ADDRESS_SANITIZER to build an ASan-instrumented version of the
 # library in /system/lib/asan/libdvm.so.
