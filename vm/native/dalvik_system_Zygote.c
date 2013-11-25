@@ -106,6 +106,10 @@ static void sigchldHandler(int s)
     if (pid < 0) {
         LOG(LOG_WARN, ZYGOTE_LOG_TAG,
             "Zygote SIGCHLD error in waitpid: %s\n",strerror(errno));
+        if (errno == ECHILD) {
+            // No child process -> suicide
+            kill(getpid(), SIGKILL);
+        }
     }
 }
 
